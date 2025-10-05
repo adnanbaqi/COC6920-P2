@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
-import { MapPin } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 interface VehiclePosition {
   lat: number;
@@ -18,177 +17,96 @@ interface VehicleMapProps {
 
 const VehicleMap = ({ currentPosition, route, trail }: VehicleMapProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
-  const markerRef = useRef<mapboxgl.Marker | null>(null);
-  const [mapboxToken, setMapboxToken] = useState('');
-  const [needsToken, setNeedsToken] = useState(true);
+  const map = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+  const routeLayerRef = useRef<L.Polyline | null>(null);
+  const trailLayerRef = useRef<L.Polyline | null>(null);
 
   useEffect(() => {
-    if (!mapContainer.current || !mapboxToken) return;
+    if (!mapContainer.current) return;
 
-    mapboxgl.accessToken = mapboxToken;
-    
-    map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [151.2093, -33.8688],
-      zoom: 13,
+    // Initialize map
+    map.current = L.map(mapContainer.current).setView([-33.8688, 151.2093], 13);
+
+    // Add dark tile layer
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      subdomains: 'abcd',
+      maxZoom: 20,
+    }).addTo(map.current);
+
+    // Add route line
+    if (route.length > 0) {
+      const routeLatLngs = route.map(([lng, lat]) => [lat, lng] as [number, number]);
+      routeLayerRef.current = L.polyline(routeLatLngs, {
+        color: 'hsl(189, 94%, 55%)',
+        weight: 3,
+        opacity: 0.3,
+      }).addTo(map.current);
+    }
+
+    // Add trail line
+    trailLayerRef.current = L.polyline([], {
+      color: 'hsl(189, 94%, 55%)',
+      weight: 4,
+      opacity: 0.8,
+    }).addTo(map.current);
+
+    // Create custom vehicle icon
+    const vehicleIcon = L.divIcon({
+      className: 'vehicle-marker',
+      html: '<div style="width: 32px; height: 32px; background: hsl(189, 94%, 55%); border-radius: 50%; border: 3px solid hsl(220, 26%, 6%); box-shadow: 0 0 20px hsl(189, 94%, 55%); display: flex; align-items: center; justify-content: center; font-size: 16px;">🚗</div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
     });
 
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-
-    map.current.on('load', () => {
-      if (!map.current) return;
-
-      // Add route line
-      map.current.addSource('route', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: route,
-          },
-        },
-      });
-
-      map.current.addLayer({
-        id: 'route',
-        type: 'line',
-        source: 'route',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round',
-        },
-        paint: {
-          'line-color': 'hsl(189, 94%, 55%)',
-          'line-width': 3,
-          'line-opacity': 0.3,
-        },
-      });
-
-      // Add trail
-      map.current.addSource('trail', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: [],
-          },
-        },
-      });
-
-      map.current.addLayer({
-        id: 'trail',
-        type: 'line',
-        source: 'trail',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round',
-        },
-        paint: {
-          'line-color': 'hsl(189, 94%, 55%)',
-          'line-width': 4,
-          'line-opacity': 0.8,
-        },
-      });
-    });
+    // Add vehicle marker
+    if (currentPosition) {
+      markerRef.current = L.marker([currentPosition.lat, currentPosition.lng], {
+        icon: vehicleIcon,
+      }).addTo(map.current);
+    }
 
     return () => {
-      markerRef.current?.remove();
       map.current?.remove();
     };
-  }, [mapboxToken]);
+  }, []);
 
   // Update trail
   useEffect(() => {
-    if (!map.current || !trail.length) return;
+    if (!trailLayerRef.current || !trail.length) return;
 
-    const source = map.current.getSource('trail') as mapboxgl.GeoJSONSource;
-    if (source) {
-      source.setData({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: trail,
-        },
-      });
-    }
+    const trailLatLngs = trail.map(([lng, lat]) => [lat, lng] as [number, number]);
+    trailLayerRef.current.setLatLngs(trailLatLngs);
   }, [trail]);
 
-  // Update vehicle marker
+  // Update vehicle marker position
   useEffect(() => {
     if (!map.current || !currentPosition) return;
 
-    if (!markerRef.current) {
-      const el = document.createElement('div');
-      el.className = 'vehicle-marker';
-      el.style.width = '32px';
-      el.style.height = '32px';
-      el.style.background = 'hsl(189, 94%, 55%)';
-      el.style.borderRadius = '50%';
-      el.style.border = '3px solid hsl(220, 26%, 6%)';
-      el.style.boxShadow = '0 0 20px hsl(189, 94%, 55%)';
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.justifyContent = 'center';
-      el.innerHTML = '🚗';
+    const vehicleIcon = L.divIcon({
+      className: 'vehicle-marker',
+      html: '<div style="width: 32px; height: 32px; background: hsl(189, 94%, 55%); border-radius: 50%; border: 3px solid hsl(220, 26%, 6%); box-shadow: 0 0 20px hsl(189, 94%, 55%); display: flex; align-items: center; justify-content: center; font-size: 16px;">🚗</div>',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
 
-      markerRef.current = new mapboxgl.Marker(el)
-        .setLngLat([currentPosition.lng, currentPosition.lat])
-        .addTo(map.current);
+    if (!markerRef.current) {
+      markerRef.current = L.marker([currentPosition.lat, currentPosition.lng], {
+        icon: vehicleIcon,
+      }).addTo(map.current);
     } else {
-      markerRef.current.setLngLat([currentPosition.lng, currentPosition.lat]);
+      markerRef.current.setLatLng([currentPosition.lat, currentPosition.lng]);
     }
 
-    map.current.easeTo({
-      center: [currentPosition.lng, currentPosition.lat],
-      duration: 1000,
+    // Smoothly pan to current position
+    map.current.panTo([currentPosition.lat, currentPosition.lng], {
+      animate: true,
+      duration: 1,
     });
   }, [currentPosition]);
 
-  if (needsToken) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-card rounded-lg border border-border">
-        <div className="max-w-md p-8 space-y-4">
-          <h3 className="text-xl font-semibold text-foreground">Mapbox Token Required</h3>
-          <p className="text-sm text-muted-foreground">
-            Get your free token at{' '}
-            <a
-              href="https://mapbox.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
-            >
-              mapbox.com
-            </a>
-          </p>
-          <input
-            type="text"
-            placeholder="Enter Mapbox token"
-            className="w-full px-4 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            onChange={(e) => setMapboxToken(e.target.value)}
-          />
-          <button
-            onClick={() => {
-              if (mapboxToken) setNeedsToken(false);
-            }}
-            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
-          >
-            Start Tracking
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div ref={mapContainer} className="w-full h-full rounded-lg overflow-hidden" />
-  );
+  return <div ref={mapContainer} className="w-full h-full rounded-lg overflow-hidden" />;
 };
 
 export default VehicleMap;
